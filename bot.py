@@ -6,8 +6,10 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import asyncio
+from flask import Flask
+import threading
 
-# Загрузка токена
+# ---------------------------- Настройки ----------------------------
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 if TOKEN is None:
@@ -17,7 +19,7 @@ ADMIN_ID = 1030933788005502996
 
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True  # Чтобы бот видел участников
+intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ---------------------------- Слоты ----------------------------
@@ -155,8 +157,6 @@ async def check_server_access():
                 print(f"Бот покинул сервер {guild.name} — оплата не подтверждена")
                 del servers[guild.id]
 
-check_server_access.start()
-
 # ---------------------------- Админ-панель ----------------------------
 class AdminPanel(View):
     def __init__(self):
@@ -241,12 +241,14 @@ async def how_to_pay(ctx):
     if admin_user:
         await admin_user.send(f"Пользователь {ctx.author} на сервере {ctx.guild.name} спросил, как оплатить.")
 
-# ---------------------------- Запуск бота ----------------------------
+# ---------------------------- on_ready ----------------------------
+@bot.event
+async def on_ready():
+    print(f'Бот запущен как {bot.user}')
+    if not check_server_access.is_running():
+        check_server_access.start()
 
-# ---------------------------- Мини-сервер для Render ----------------------------
-from flask import Flask
-import threading
-
+# ---------------------------- Flask для Render ----------------------------
 app = Flask("")
 
 @app.route("/")
@@ -254,14 +256,14 @@ def home():
     return "Bot is running!"
 
 def run_flask():
-    port = int(os.environ.get("PORT", 8080))  # Render назначает PORT автоматически
+    port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
-# Запуск Flask в отдельном потоке
 threading.Thread(target=run_flask).start()
 
-
+# ---------------------------- Запуск бота ----------------------------
 bot.run(TOKEN)
+
 
 
 
