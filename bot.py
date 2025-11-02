@@ -4,6 +4,7 @@ from discord.ext import commands
 from discord.ui import Button, View
 from dotenv import load_dotenv
 from datetime import datetime
+from zoneinfo import ZoneInfo  # Для московского времени
 
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
@@ -16,6 +17,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 current_slots = {}
 last_embed_message = None
+header_text = ""  # Заголовок уведомления
 
 EMOJI_MAP = {
     "танк": "🛡️",
@@ -89,12 +91,12 @@ class SignupView(View):
                     self.add_item(LeaveButton(slot_id, info["name"]))
 
 async def update_message(current_user=None):
-    global last_embed_message
+    global last_embed_message, header_text
     if not last_embed_message:
         return
 
-    now = datetime.now()
-    title = f"Запись {now.strftime('%H:%M %d.%m')}"
+    moscow_time = datetime.now(ZoneInfo("Europe/Moscow"))
+    title = f"{header_text} — {moscow_time.strftime('%H:%M %d.%m')}"
 
     # Собираем описание заново
     desc = ""
@@ -115,24 +117,28 @@ async def update_message(current_user=None):
 
 @bot.command()
 async def create(ctx, *, text):
-    global current_slots, last_embed_message
+    global current_slots, last_embed_message, header_text
     current_slots = {}
 
     lines = text.split("\n")
-    slot_lines = []
+    if not lines:
+        await ctx.send("❌ Нужно хотя бы указать заголовок и один слот.", delete_after=5)
+        return
 
-    for line in lines:
-        if line.strip() and line.strip()[0].isdigit():
-            slot_lines.append(line.strip())
+    header_text = lines[0].strip()  # Первая строка — заголовок / уведомление
+    slot_lines = lines[1:]         # Остальные строки — слоты
 
     # Создание слотов
     for idx, line in enumerate(slot_lines, start=1):
-        slot_name = line.split(" ", 1)[-1].strip()
-        current_slots[idx] = {"name": slot_name, "user": None}
+        line = line.strip()
+        if line:
+            current_slots[idx] = {"name": line, "user": None}
 
-    now = datetime.now()
-    title = f"Запись {now.strftime('%H:%M %d.%m')}"
+    # Время по Москве
+    moscow_time = datetime.now(ZoneInfo("Europe/Moscow"))
+    title = f"{header_text} — {moscow_time.strftime('%H:%M %d.%m')}"
 
+    # Формируем описание
     desc = ""
     for slot_id, info in current_slots.items():
         desc += f"{slot_id}. ⬜ {add_emoji(info['name'])} — свободно\n"
@@ -143,9 +149,9 @@ async def create(ctx, *, text):
         color=0x00ff99
     )
 
-    last_embed_message = await ctx.send(content="@everyone", embed=embed, view=SignupView())
+    last_embed_message = await ctx.send(embed=embed, view=SignupView())
 
-    # Попробуем удалить команду пользователя
+    # Попытка удалить команду пользователя
     try:
         await ctx.message.delete()
     except discord.Forbidden:
@@ -154,4 +160,5 @@ async def create(ctx, *, text):
         await ctx.send(f"❌ Не удалось удалить сообщение: {e}", delete_after=5)
 
 bot.run(TOKEN)
+
 
