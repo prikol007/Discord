@@ -242,6 +242,25 @@ async def how_to_pay(ctx):
         await admin_user.send(f"Пользователь {ctx.author} на сервере {ctx.guild.name} спросил, как оплатить.")
 
 # ---------------------------- Запуск бота ----------------------------
+
+# ---------------------------- Мини-сервер для Render ----------------------------
+from flask import Flask
+import threading
+
+app = Flask("")
+
+@app.route("/")
+def home():
+    return "Bot is running!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))  # Render назначает PORT автоматически
+    app.run(host="0.0.0.0", port=port)
+
+# Запуск Flask в отдельном потоке
+threading.Thread(target=run_flask).start()
+
+
 bot.run(TOKEN)
 
 
