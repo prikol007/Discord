@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from datetime import datetime
 from zoneinfo import ZoneInfo  # Для московского времени
 
+# Загрузка токена из .env
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 if TOKEN is None:
@@ -33,6 +34,7 @@ def add_emoji(name):
             return f"{emoji} {name}"
     return name
 
+# Кнопка "Записаться"
 class RoleButton(Button):
     def __init__(self, slot_number, slot_name):
         super().__init__(label=add_emoji(slot_name), style=discord.ButtonStyle.primary)
@@ -40,7 +42,7 @@ class RoleButton(Button):
         self.slot_name = slot_name
 
     async def callback(self, interaction: discord.Interaction):
-        global current_slots, last_embed_message
+        global current_slots
 
         # Проверка, записан ли пользователь на другой слот
         for info in current_slots.values():
@@ -57,10 +59,11 @@ class RoleButton(Button):
             return
 
         current_slots[self.slot_number]["user"] = interaction.user
-        await update_message(interaction.user)
+        await update_message()
         await interaction.response.send_message(
             f"✅ Вы записаны на слот {self.slot_name}", ephemeral=True)
 
+# Кнопка "Отписаться"
 class LeaveButton(Button):
     def __init__(self, slot_number, slot_name):
         super().__init__(label="Отписаться", style=discord.ButtonStyle.danger)
@@ -74,23 +77,23 @@ class LeaveButton(Button):
                 "❌ Вы не записаны на этот слот.", ephemeral=True)
             return
         current_slots[self.slot_number]["user"] = None
-        await update_message(interaction.user)
+        await update_message()
         await interaction.response.send_message(
             f"✅ Вы отписались от слота {self.slot_name}", ephemeral=True)
 
+# Вью для кнопок: запись и отписка
 class SignupView(View):
-    def __init__(self, current_user=None):
+    def __init__(self):
         super().__init__(timeout=None)
-        # Кнопки для записи
         for slot_id, info in current_slots.items():
+            # Кнопка для записи
             self.add_item(RoleButton(slot_id, info["name"]))
-        # Кнопки для отписки
-        if current_user:
-            for slot_id, info in current_slots.items():
-                if info["user"] == current_user:
-                    self.add_item(LeaveButton(slot_id, info["name"]))
+            # Кнопка для отписки, если слот уже занят
+            if info["user"]:
+                self.add_item(LeaveButton(slot_id, info["name"]))
 
-async def update_message(current_user=None):
+# Обновление embed-сообщения
+async def update_message():
     global last_embed_message, header_text
     if not last_embed_message:
         return
@@ -98,7 +101,6 @@ async def update_message(current_user=None):
     moscow_time = datetime.now(ZoneInfo("Europe/Moscow"))
     title = f"{header_text} — {moscow_time.strftime('%H:%M %d.%m')}"
 
-    # Собираем описание заново
     desc = ""
     for slot_id, info in current_slots.items():
         slot_display = add_emoji(info["name"])
@@ -107,14 +109,16 @@ async def update_message(current_user=None):
         else:
             desc += f"{slot_id}. ⬜ {slot_display} — свободно\n"
 
+    view = SignupView()
     embed = discord.Embed(
         title=title,
         description=desc,
         color=0x00ff99
     )
 
-    await last_embed_message.edit(embed=embed, view=SignupView(current_user))
+    await last_embed_message.edit(embed=embed, view=view)
 
+# Команда для создания слотов
 @bot.command()
 async def create(ctx, *, text):
     global current_slots, last_embed_message, header_text
@@ -125,20 +129,17 @@ async def create(ctx, *, text):
         await ctx.send("❌ Нужно хотя бы указать заголовок и один слот.", delete_after=5)
         return
 
-    header_text = lines[0].strip()  # Первая строка — заголовок / уведомление
+    header_text = lines[0].strip()  # Заголовок
     slot_lines = lines[1:]         # Остальные строки — слоты
 
-    # Создание слотов
     for idx, line in enumerate(slot_lines, start=1):
         line = line.strip()
         if line:
             current_slots[idx] = {"name": line, "user": None}
 
-    # Время по Москве
     moscow_time = datetime.now(ZoneInfo("Europe/Moscow"))
     title = f"{header_text} — {moscow_time.strftime('%H:%M %d.%m')}"
 
-    # Формируем описание
     desc = ""
     for slot_id, info in current_slots.items():
         desc += f"{slot_id}. ⬜ {add_emoji(info['name'])} — свободно\n"
@@ -160,5 +161,6 @@ async def create(ctx, *, text):
         await ctx.send(f"❌ Не удалось удалить сообщение: {e}", delete_after=5)
 
 bot.run(TOKEN)
+
 
 
