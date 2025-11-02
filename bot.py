@@ -38,46 +38,6 @@ class RoleButton(Button):
         global current_slots, last_embed_message
 
         # Проверяем, не записан ли уже пользователь
-        for slot_id, info in cuimport os
-import discord
-from discord.ext import commands
-from discord.ui import Button, View
-from dotenv import load_dotenv
-
-# ==============================
-# Загрузка токена из .env
-# ==============================
-load_dotenv()
-TOKEN = os.getenv("TOKEN")
-
-if TOKEN is None:
-    raise ValueError("Токен Discord не задан! Проверьте переменные окружения.")
-
-# ==============================
-# Настройки Discord-бота
-# ==============================
-intents = discord.Intents.default()
-intents.message_content = True
-
-# ==============================
-# Хранилище слотов и сообщений
-# ==============================
-current_slots = {}
-last_embed_message = None
-
-# ==============================
-# Кнопки для записи и удаления
-# ==============================
-class RoleButton(Button):
-    def __init__(self, slot_number, slot_name):
-        super().__init__(label=slot_name, style=discord.ButtonStyle.primary)
-        self.slot_number = slot_number
-        self.slot_name = slot_name
-
-    async def callback(self, interaction: discord.Interaction):
-        global current_slots, last_embed_message
-
-        # Проверяем, не записан ли уже пользователь
         for slot_id, info in current_slots.items():
             if info["user"] == interaction.user:
                 await interaction.response.send_message(
@@ -130,14 +90,12 @@ class LeaveButton(Button):
 class SignupView(View):
     def __init__(self, user=None):
         super().__init__(timeout=None)
-        added_leave = set()
         for slot_id, info in current_slots.items():
             # Кнопка "Записаться"
             self.add_item(RoleButton(slot_id, info["name"]))
-            # Кнопка "Отписаться" только один раз для пользователя
-            if user and info["user"] == user and slot_id not in added_leave:
+            # Кнопка "Отписаться" только для пользователя, который записан
+            if user and info["user"] == user:
                 self.add_item(LeaveButton(slot_id, info["name"]))
-                added_leave.add(slot_id)
 
 
 async def update_message(message, current_user=None):
@@ -151,12 +109,7 @@ async def update_message(message, current_user=None):
         else:
             desc += f"{slot_id}. ⬜ {info['name']} — свободно\n"
     embed.description = desc
-    try:
-        await message.edit(embed=embed, view=SignupView(user=current_user))
-    except discord.NotFound:
-        # Сообщение уже удалено, обнуляем ссылку
-        global last_embed_message
-        last_embed_message = None
+    await message.edit(embed=embed, view=SignupView(user=current_user))
 
 
 # ==============================
@@ -168,6 +121,13 @@ def setup_commands(bot):
         """Создаёт запись с кнопками для выбора слотов."""
         global current_slots, last_embed_message
         current_slots = {}
+
+        # Удаляем старое сообщение, если есть
+        if last_embed_message:
+            try:
+                await last_embed_message.delete()
+            except:
+                pass
 
         lines = text.split("\n")
         header_lines = []
@@ -199,12 +159,7 @@ def setup_commands(bot):
         # Отправляем сообщение с кнопками
         view = SignupView()
         last_embed_message = await ctx.send(embed=embed, view=view)
-
-        # Попытка удалить команду пользователя (обрабатываем NotFound)
-        try:
-            await ctx.message.delete()
-        except discord.NotFound:
-            pass
+        await ctx.message.delete()
 
 
 # ==============================
