@@ -40,7 +40,7 @@ def add_emoji(slot_name: str) -> str:
     for key, emoji in EMOJI_MAP.items():
         if key.lower() in slot_name.lower():
             return f"{emoji} {slot_name}"
-    return slot_name  # если нет совпадений, оставляем как есть
+    return slot_name
 
 # ==============================
 # Кнопки
@@ -54,6 +54,7 @@ class RoleButton(Button):
     async def callback(self, interaction: discord.Interaction):
         global current_slots, last_embed_message
 
+        # Проверка, не записан ли уже пользователь
         for info in current_slots.values():
             if info["user"] == interaction.user:
                 await interaction.response.send_message(
@@ -62,6 +63,7 @@ class RoleButton(Button):
                 )
                 return
 
+        # Проверка, занят ли слот
         if current_slots[self.slot_number]["user"] is not None:
             await interaction.response.send_message(
                 f"❌ Слот {self.slot_name} уже занят: {current_slots[self.slot_number]['user'].mention}",
@@ -116,7 +118,9 @@ async def update_message(message, current_user=None):
     if not message:
         return
 
-    description = message.embeds[0].description if message.embeds else ""
+    # Текст сверху берём только от пользователя
+    description = "\n".join(message.embeds[0].description.split("\n"))
+
     now = datetime.now()
     title = f"Запись {now.strftime('%H:%M %d.%m')}"
 
@@ -184,3 +188,4 @@ if __name__ == "__main__":
     bot = commands.Bot(command_prefix="!", intents=intents)
     setup_commands(bot)
     bot.run(TOKEN)
+
