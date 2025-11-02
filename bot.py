@@ -3,7 +3,7 @@ import discord
 from flask import Flask
 import threading
 from discord.ext import commands, tasks
-from discord.ui import Button, View, Select
+from discord.ui import Button, View, Select, Modal, TextInput
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -25,7 +25,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # ---------------------------- Слоты ----------------------------
 current_slots = {}
 last_embed_message = None
-header_text = ""  
+header_text = ""
 
 EMOJI_MAP = {
     "танк": "🛡️",
@@ -200,24 +200,57 @@ class AdminPanel(View):
         self.add_item(CreatePromoButton())
         self.add_item(PromoReportButton())
 
-# Кнопки
 class BlockServerButton(Button):
     def __init__(self):
-        super().__init__(label="Заблокировать сервер", style=discord.ButtonStyle.danger)
+        super().__init__(label="🚫 Заблокировать сервер", style=discord.ButtonStyle.danger)
     async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != ADMIN_ID: return await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
+        if interaction.user.id != ADMIN_ID:
+            return await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
         servers[interaction.guild.id]["blocked_since"] = datetime.now()
         await notify_server(interaction.guild.id, "⚠️ Сервер заблокирован администратором.")
         await interaction.response.send_message("Сервер заблокирован.", ephemeral=True)
 
 class UnblockServerButton(Button):
     def __init__(self):
-        super().__init__(label="Разблокировать сервер", style=discord.ButtonStyle.success)
+        super().__init__(label="🟢 Разблокировать сервер", style=discord.ButtonStyle.success)
     async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != ADMIN_ID: return await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
-        servers[interaction.guild.id]["blocked_since"] = None
-        await notify_server(interaction.guild.id, "Сервер разблокирован администратором.")
-        await interaction.response.send_message("Сервер разблокирован.", ephemeral=True)
+        if interaction.user.id != ADMIN_ID:
+            return await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
+        await interaction.response.send_message("Выберите срок разблокировки:", view=UnblockDurationSelect(), ephemeral=True)
+
+class UnblockDurationSelect(View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(UnblockDurationSelectMenu())
+
+class UnblockDurationSelectMenu(Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="1 день", value="1"),
+            discord.SelectOption(label="3 дня", value="3"),
+            discord.SelectOption(label="7 дней", value="7"),
+            discord.SelectOption(label="30 дней", value="30"),
+            discord.SelectOption(label="Навсегда", value="forever")
+        ]
+        super().__init__(placeholder="Выберите срок доступа", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != ADMIN_ID:
+            return await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
+        guild_id = interaction.guild.id
+        now = datetime.now()
+        value = self.values[0]
+        if value == "forever":
+            servers[guild_id]["expiry"] = None
+            servers[guild_id]["blocked_since"] = None
+            msg = "✅ Сервер разблокирован навсегда."
+        else:
+            days = int(value)
+            servers[guild_id]["expiry"] = now + timedelta(days=days)
+            servers[guild_id]["blocked_since"] = None
+            msg = f"✅ Сервер разблокирован на {days} дней (до {servers[guild_id]['expiry'].strftime('%d.%m %H:%M')})."
+        await notify_server(guild_id, msg)
+        await interaction.response.send_message(msg, ephemeral=True)
 
 class LeaveServerSelect(Select):
     def __init__(self):
@@ -236,18 +269,20 @@ class LeaveServerSelect(Select):
 
 class CreatePromoButton(Button):
     def __init__(self):
-        super().__init__(label="Создать промокод на 3 дня", style=discord.ButtonStyle.primary)
+        super().__init__(label="🎁 Создать промокод на 3 дня", style=discord.ButtonStyle.primary)
     async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != ADMIN_ID: return await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
+        if interaction.user.id != ADMIN_ID:
+            return await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
         code = f"PROMO{len(promocodes)+1}"
         promocodes[code] = {"days": 3, "creator": ADMIN_ID, "used_by": []}
-        await interaction.response.send_message(f"✅ Промокод {code} создан на 3 дня.", ephemeral=True)
+        await interaction.response.send_message(f"✅ Промокод `{code}` создан на 3 дня.", ephemeral=True)
 
 class PromoReportButton(Button):
     def __init__(self):
-        super().__init__(label="Отчёт по промокодам", style=discord.ButtonStyle.secondary)
+        super().__init__(label="📋 Отчёт по промокодам", style=discord.ButtonStyle.secondary)
     async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != ADMIN_ID: return await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
+        if interaction.user.id != ADMIN_ID:
+            return await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
         lines = []
         for code, info in promocodes.items():
             used_servers = [servers[g]["name"] for g in info["used_by"] if g in servers]
@@ -258,18 +293,47 @@ class PromoReportButton(Button):
 @bot.command()
 async def admin_panel(ctx):
     if ctx.author.id != ADMIN_ID:
-        await ctx.send("❌ У вас нет доступа к панели.", delete_after=5)
-        return
+        return await ctx.send("❌ У вас нет доступа к панели.", delete_after=5)
     await ctx.send("🔧 Панель администратора", view=AdminPanel())
 
-# ---------------------------- Связь с админом ----------------------------
-@bot.command()
-async def how_to_pay(ctx):
-    await ctx.send("💰 Оплата производится игровой валютой. Свяжитесь с администратором для деталей.")
-    admin_user = bot.get_user(ADMIN_ID)
-    if admin_user:
-        await admin_user.send(f"Пользователь {ctx.author} на сервере {ctx.guild.name} спросил, как оплатить.")
+# ---------------------------- Промокоды и доступ ----------------------------
+class PromoModal(Modal, title="🎟️ Ввести промокод"):
+    code_input = TextInput(label="Введите промокод", placeholder="например, PROMO1")
 
+    async def on_submit(self, interaction: discord.Interaction):
+        code = self.code_input.value.strip().upper()
+        guild_id = interaction.guild.id
+        now = datetime.now()
+        if code not in promocodes:
+            return await interaction.response.send_message("❌ Неверный промокод.", ephemeral=True)
+        promo = promocodes[code]
+        if guild_id in promo["used_by"]:
+            return await interaction.response.send_message("⚠️ Этот промокод уже использован на вашем сервере.", ephemeral=True)
+        servers[guild_id]["expiry"] = now + timedelta(days=promo["days"])
+        servers[guild_id]["blocked_since"] = None
+        promo["used_by"].append(guild_id)
+        await notify_server(guild_id, f"🎉 Промокод `{code}` активирован! Доступ продлён на {promo['days']} дней.")
+        await interaction.response.send_message(f"✅ Промокод активирован на {promo['days']} дней!", ephemeral=True)
+
+@bot.command()
+async def promo(ctx):
+    await ctx.send_modal(PromoModal())
+
+@bot.command()
+async def access(ctx):
+    info = servers.get(ctx.guild.id)
+    if not info:
+        return await ctx.send("⚠️ Сервер не зарегистрирован.")
+    expiry = info.get("expiry")
+    if expiry is None:
+        return await ctx.send("♾️ У вашего сервера безлимитный доступ.")
+    now = datetime.now()
+    remaining = expiry - now
+    if remaining.total_seconds() <= 0:
+        return await ctx.send("⛔ Срок доступа истёк.")
+    days = remaining.days
+    hours = remaining.seconds // 3600
+    await ctx.send(f"⏱️ Доступ активен ещё **{days} дн. {hours} ч.**")
 
 # ---------------------------- Flask для Render ----------------------------
 app = Flask("")
@@ -286,7 +350,6 @@ threading.Thread(target=run_flask).start()
 
 # ---------------------------- Запуск бота ----------------------------
 bot.run(TOKEN)
-
 
 
 
