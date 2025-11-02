@@ -40,12 +40,14 @@ class RoleButton(Button):
     async def callback(self, interaction: discord.Interaction):
         global current_slots, last_embed_message
 
+        # Проверка, записан ли пользователь на другой слот
         for info in current_slots.values():
             if info["user"] == interaction.user:
                 await interaction.response.send_message(
                     f"❌ Вы уже записаны на слот {info['name']}", ephemeral=True)
                 return
 
+        # Проверка, свободен ли слот
         if current_slots[self.slot_number]["user"] is not None:
             await interaction.response.send_message(
                 f"❌ Слот {self.slot_name} уже занят: {current_slots[self.slot_number]['user'].mention}",
@@ -53,7 +55,7 @@ class RoleButton(Button):
             return
 
         current_slots[self.slot_number]["user"] = interaction.user
-        await update_message(current_user=interaction.user)
+        await update_message(interaction.user)
         await interaction.response.send_message(
             f"✅ Вы записаны на слот {self.slot_name}", ephemeral=True)
 
@@ -70,15 +72,17 @@ class LeaveButton(Button):
                 "❌ Вы не записаны на этот слот.", ephemeral=True)
             return
         current_slots[self.slot_number]["user"] = None
-        await update_message(current_user=interaction.user)
+        await update_message(interaction.user)
         await interaction.response.send_message(
             f"✅ Вы отписались от слота {self.slot_name}", ephemeral=True)
 
 class SignupView(View):
     def __init__(self, current_user=None):
         super().__init__(timeout=None)
+        # Кнопки для записи
         for slot_id, info in current_slots.items():
             self.add_item(RoleButton(slot_id, info["name"]))
+        # Кнопки для отписки
         if current_user:
             for slot_id, info in current_slots.items():
                 if info["user"] == current_user:
@@ -92,12 +96,7 @@ async def update_message(current_user=None):
     now = datetime.now()
     title = f"Запись {now.strftime('%H:%M %d.%m')}"
 
-    embed = discord.Embed(
-        title=title,
-        description=last_embed_message.embeds[0].description,
-        color=0x00ff99
-    )
-
+    # Собираем описание заново
     desc = ""
     for slot_id, info in current_slots.items():
         slot_display = add_emoji(info["name"])
@@ -106,7 +105,11 @@ async def update_message(current_user=None):
         else:
             desc += f"{slot_id}. ⬜ {slot_display} — свободно\n"
 
-    embed.add_field(name="Слоты", value=desc, inline=False)
+    embed = discord.Embed(
+        title=title,
+        description=desc,
+        color=0x00ff99
+    )
 
     await last_embed_message.edit(embed=embed, view=SignupView(current_user))
 
@@ -116,15 +119,13 @@ async def create(ctx, *, text):
     current_slots = {}
 
     lines = text.split("\n")
-    header_lines = []
     slot_lines = []
 
     for line in lines:
         if line.strip() and line.strip()[0].isdigit():
             slot_lines.append(line.strip())
-        else:
-            header_lines.append(line.strip())
 
+    # Создание слотов
     for idx, line in enumerate(slot_lines, start=1):
         slot_name = line.split(" ", 1)[-1].strip()
         current_slots[idx] = {"name": slot_name, "user": None}
@@ -132,21 +133,25 @@ async def create(ctx, *, text):
     now = datetime.now()
     title = f"Запись {now.strftime('%H:%M %d.%m')}"
 
+    desc = ""
+    for slot_id, info in current_slots.items():
+        desc += f"{slot_id}. ⬜ {add_emoji(info['name'])} — свободно\n"
+
     embed = discord.Embed(
         title=title,
-        description="\n".join(header_lines),
+        description=desc,
         color=0x00ff99
     )
 
-    slot_status = "\n".join([f"{i}. ⬜ {add_emoji(info['name'])} — свободно"
-                             for i, info in current_slots.items()])
-    embed.add_field(name="Слоты", value=slot_status, inline=False)
-
     last_embed_message = await ctx.send(content="@everyone", embed=embed, view=SignupView())
 
+    # Попробуем удалить команду пользователя
     try:
         await ctx.message.delete()
-    except:
-        pass
+    except discord.Forbidden:
+        await ctx.send("❌ У меня нет прав на удаление сообщений!", delete_after=5)
+    except discord.HTTPException as e:
+        await ctx.send(f"❌ Не удалось удалить сообщение: {e}", delete_after=5)
 
 bot.run(TOKEN)
+
