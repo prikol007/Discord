@@ -2,7 +2,6 @@ import os
 import discord
 from discord.ext import commands
 from discord.ui import Button, View
-import asyncio
 from dotenv import load_dotenv
 
 # ==============================
@@ -57,7 +56,7 @@ class RoleButton(Button):
 
         # Записываем пользователя
         current_slots[self.slot_number]["user"] = interaction.user
-        await update_message(last_embed_message)
+        await update_message(last_embed_message, current_user=interaction.user)
         await interaction.response.send_message(
             f"✅ Вы записаны на слот {self.slot_name}", ephemeral=True
         )
@@ -79,7 +78,7 @@ class LeaveButton(Button):
             return
 
         current_slots[self.slot_number]["user"] = None
-        await update_message(last_embed_message)
+        await update_message(last_embed_message, current_user=interaction.user)
         await interaction.response.send_message(
             f"✅ Вы отписались от слота {self.slot_name}", ephemeral=True
         )
@@ -92,12 +91,14 @@ class SignupView(View):
     def __init__(self, user=None):
         super().__init__(timeout=None)
         for slot_id, info in current_slots.items():
+            # Кнопка "Записаться"
             self.add_item(RoleButton(slot_id, info["name"]))
+            # Кнопка "Отписаться" только для пользователя, который записан
             if user and info["user"] == user:
                 self.add_item(LeaveButton(slot_id, info["name"]))
 
 
-async def update_message(message):
+async def update_message(message, current_user=None):
     if not message:
         return
     embed = discord.Embed(title="Запись на поход", color=0x00ff99)
@@ -108,7 +109,7 @@ async def update_message(message):
         else:
             desc += f"{slot_id}. ⬜ {info['name']} — свободно\n"
     embed.description = desc
-    await message.edit(embed=embed, view=SignupView())
+    await message.edit(embed=embed, view=SignupView(user=current_user))
 
 
 # ==============================
@@ -148,6 +149,7 @@ def setup_commands(bot):
         slot_status = "\n".join([f"{i}. ⬜ {info['name']} — свободно" for i, info in current_slots.items()])
         embed.add_field(name="Слоты", value=slot_status, inline=False)
 
+        # Отправляем сообщение с кнопками
         view = SignupView()
         last_embed_message = await ctx.send(embed=embed, view=view)
         await ctx.message.delete()
