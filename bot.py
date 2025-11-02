@@ -3,7 +3,6 @@ import discord
 from discord.ext import commands
 from discord.ui import Button, View
 import asyncio
-import traceback
 from dotenv import load_dotenv
 
 # ==============================
@@ -11,6 +10,9 @@ from dotenv import load_dotenv
 # ==============================
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
+
+if TOKEN is None:
+    raise ValueError("Токен Discord не задан! Проверьте переменные окружения.")
 
 # ==============================
 # Настройки Discord-бота
@@ -158,3 +160,4 @@ if __name__ == "__main__":
     bot = commands.Bot(command_prefix="!", intents=intents)
     setup_commands(bot)
     bot.run(TOKEN)
+
