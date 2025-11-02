@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 # Загрузка токена из .env
 # ==============================
 load_dotenv()
-TOKEN = os.getenv("DISCORD_TOKEN")
+TOKEN = os.getenv("TOKEN")
 
 if TOKEN is None:
     raise ValueError("Токен Discord не задан! Проверьте переменные окружения.")
