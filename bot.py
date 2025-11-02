@@ -1,13 +1,11 @@
 import os
 import discord
 from discord.ext import commands, tasks
-from discord.ui import Button, View
+from discord.ui import Button, View, Select
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import asyncio
-from flask import Flask
-import threading
 
 # ---------------------------- Настройки ----------------------------
 load_dotenv()
@@ -15,7 +13,7 @@ TOKEN = os.getenv("TOKEN")
 if TOKEN is None:
     raise ValueError("Токен Discord не задан!")
 
-ADMIN_ID = 1030933788005502996
+ADMIN_ID = 1030933788005502996  # ID администратора
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -48,7 +46,6 @@ class RoleButton(Button):
         self.slot_name = slot_name
 
     async def callback(self, interaction: discord.Interaction):
-        global current_slots
         for info in current_slots.values():
             if info["user"] == interaction.user:
                 await interaction.response.send_message(
@@ -71,7 +68,6 @@ class LeaveButton(Button):
         self.slot_name = slot_name
 
     async def callback(self, interaction: discord.Interaction):
-        global current_slots
         if current_slots[self.slot_number]["user"] != interaction.user:
             await interaction.response.send_message(
                 "❌ Вы не записаны на этот слот.", ephemeral=True)
@@ -105,6 +101,36 @@ async def update_message():
     view = SignupView()
     embed = discord.Embed(title=title, description=desc, color=0x00ff99)
     await last_embed_message.edit(embed=embed, view=view)
+
+# ---------------------------- Команда !create ----------------------------
+@bot.command()
+async def create(ctx, *, text):
+    if ctx.author.id != ADMIN_ID:
+        await ctx.send("❌ У вас нет прав на создание слотов.", delete_after=5)
+        return
+    global current_slots, last_embed_message, header_text
+    current_slots = {}
+    lines = text.split("\n")
+    if not lines:
+        await ctx.send("❌ Нужно хотя бы указать заголовок и один слот.", delete_after=5)
+        return
+    header_text = lines[0].strip()
+    slot_lines = lines[1:]
+    for idx, line in enumerate(slot_lines, start=1):
+        line = line.strip()
+        if line:
+            current_slots[idx] = {"name": line, "user": None}
+    moscow_time = datetime.now(ZoneInfo("Europe/Moscow"))
+    title = f"{header_text} — {moscow_time.strftime('%H:%M %d.%m')}"
+    desc = ""
+    for slot_id, info in current_slots.items():
+        desc += f"{slot_id}. ⬜ {add_emoji(info['name'])} — свободно\n"
+    embed = discord.Embed(title=title, description=desc, color=0x00ff99)
+    last_embed_message = await ctx.send(embed=embed, view=SignupView())
+    try:
+        await ctx.message.delete()
+    except:
+        pass
 
 # ---------------------------- Серверы и промокоды ----------------------------
 servers = {}  # guild_id: {name, access_level, expiry, blocked_since, promo_used_by}
@@ -157,23 +183,27 @@ async def check_server_access():
                 print(f"Бот покинул сервер {guild.name} — оплата не подтверждена")
                 del servers[guild.id]
 
+@bot.event
+async def on_ready():
+    print(f"Бот запущен как {bot.user}")
+    check_server_access.start()
+
 # ---------------------------- Админ-панель ----------------------------
 class AdminPanel(View):
     def __init__(self):
         super().__init__(timeout=None)
         self.add_item(BlockServerButton())
         self.add_item(UnblockServerButton())
-        self.add_item(LeaveServerButton())
+        self.add_item(LeaveServerSelect())
         self.add_item(CreatePromoButton())
         self.add_item(PromoReportButton())
 
+# Кнопки
 class BlockServerButton(Button):
     def __init__(self):
         super().__init__(label="Заблокировать сервер", style=discord.ButtonStyle.danger)
     async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != ADMIN_ID:
-            await interaction.response.send_message("❌ Недостаточно прав.", ephemeral=True)
-            return
+        if interaction.user.id != ADMIN_ID: return await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
         servers[interaction.guild.id]["blocked_since"] = datetime.now()
         await notify_server(interaction.guild.id, "⚠️ Сервер заблокирован администратором.")
         await interaction.response.send_message("Сервер заблокирован.", ephemeral=True)
@@ -182,32 +212,31 @@ class UnblockServerButton(Button):
     def __init__(self):
         super().__init__(label="Разблокировать сервер", style=discord.ButtonStyle.success)
     async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != ADMIN_ID:
-            await interaction.response.send_message("❌ Недостаточно прав.", ephemeral=True)
-            return
+        if interaction.user.id != ADMIN_ID: return await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
         servers[interaction.guild.id]["blocked_since"] = None
         await notify_server(interaction.guild.id, "Сервер разблокирован администратором.")
         await interaction.response.send_message("Сервер разблокирован.", ephemeral=True)
 
-class LeaveServerButton(Button):
+class LeaveServerSelect(Select):
     def __init__(self):
-        super().__init__(label="Удалить сервер (выход бота)", style=discord.ButtonStyle.secondary)
+        options = [discord.SelectOption(label=g.name, value=str(g.id)) for g in bot.guilds]
+        super().__init__(placeholder="Выберите сервер для выхода", options=options)
     async def callback(self, interaction: discord.Interaction):
         if interaction.user.id != ADMIN_ID:
-            await interaction.response.send_message("❌ Недостаточно прав.", ephemeral=True)
-            return
-        guild = interaction.guild
-        await interaction.response.send_message("Бот покидает сервер через 5 секунд...", ephemeral=True)
-        await asyncio.sleep(5)
-        await guild.leave()
+            return await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
+        guild_id = int(self.values[0])
+        guild = bot.get_guild(guild_id)
+        if guild:
+            await interaction.response.send_message(f"Бот покидает сервер {guild.name} через 5 секунд...", ephemeral=True)
+            await asyncio.sleep(5)
+            await guild.leave()
+            await interaction.followup.send(f"✅ Бот покинул сервер {guild.name}.", ephemeral=True)
 
 class CreatePromoButton(Button):
     def __init__(self):
         super().__init__(label="Создать промокод на 3 дня", style=discord.ButtonStyle.primary)
     async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != ADMIN_ID:
-            await interaction.response.send_message("❌ Недостаточно прав.", ephemeral=True)
-            return
+        if interaction.user.id != ADMIN_ID: return await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
         code = f"PROMO{len(promocodes)+1}"
         promocodes[code] = {"days": 3, "creator": ADMIN_ID, "used_by": []}
         await interaction.response.send_message(f"✅ Промокод {code} создан на 3 дня.", ephemeral=True)
@@ -216,9 +245,7 @@ class PromoReportButton(Button):
     def __init__(self):
         super().__init__(label="Отчёт по промокодам", style=discord.ButtonStyle.secondary)
     async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != ADMIN_ID:
-            await interaction.response.send_message("❌ Недостаточно прав.", ephemeral=True)
-            return
+        if interaction.user.id != ADMIN_ID: return await interaction.response.send_message("❌ Нет прав.", ephemeral=True)
         lines = []
         for code, info in promocodes.items():
             used_servers = [servers[g]["name"] for g in info["used_by"] if g in servers]
@@ -241,12 +268,6 @@ async def how_to_pay(ctx):
     if admin_user:
         await admin_user.send(f"Пользователь {ctx.author} на сервере {ctx.guild.name} спросил, как оплатить.")
 
-# ---------------------------- on_ready ----------------------------
-@bot.event
-async def on_ready():
-    print(f'Бот запущен как {bot.user}')
-    if not check_server_access.is_running():
-        check_server_access.start()
 
 # ---------------------------- Flask для Render ----------------------------
 app = Flask("")
