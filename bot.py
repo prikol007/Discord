@@ -3,18 +3,18 @@ import discord
 from discord.ext import commands
 from discord.ui import Button, View
 from dotenv import load_dotenv
+from datetime import datetime
 
 # ==============================
-# Загрузка токена из .env
+# Загрузка токена
 # ==============================
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
-
 if TOKEN is None:
     raise ValueError("Токен Discord не задан! Проверьте переменные окружения.")
 
 # ==============================
-# Настройки Discord-бота
+# Настройки бота
 # ==============================
 intents = discord.Intents.default()
 intents.message_content = True
@@ -26,19 +26,35 @@ current_slots = {}
 last_embed_message = None
 
 # ==============================
-# Кнопки для записи и удаления
+# Словарь эмодзи для ролей
+# ==============================
+EMOJI_MAP = {
+    "танк": "🛡️",
+    "хил": "💉",
+    "ДД": "⚔️",
+    "порезка": "🔪",
+    "пылайка": "🔥"
+}
+
+def add_emoji(slot_name: str) -> str:
+    for key, emoji in EMOJI_MAP.items():
+        if key.lower() in slot_name.lower():
+            return f"{emoji} {slot_name}"
+    return slot_name  # если нет совпадений, оставляем как есть
+
+# ==============================
+# Кнопки
 # ==============================
 class RoleButton(Button):
     def __init__(self, slot_number, slot_name):
-        super().__init__(label=slot_name, style=discord.ButtonStyle.primary)
+        super().__init__(label=add_emoji(slot_name), style=discord.ButtonStyle.primary)
         self.slot_number = slot_number
         self.slot_name = slot_name
 
     async def callback(self, interaction: discord.Interaction):
         global current_slots, last_embed_message
 
-        # Проверяем, не записан ли уже пользователь
-        for slot_id, info in current_slots.items():
+        for info in current_slots.values():
             if info["user"] == interaction.user:
                 await interaction.response.send_message(
                     f"❌ Вы уже записаны на слот {info['name']}. Сначала отпишитесь.",
@@ -46,7 +62,6 @@ class RoleButton(Button):
                 )
                 return
 
-        # Проверяем, не занят ли слот
         if current_slots[self.slot_number]["user"] is not None:
             await interaction.response.send_message(
                 f"❌ Слот {self.slot_name} уже занят: {current_slots[self.slot_number]['user'].mention}",
@@ -54,7 +69,6 @@ class RoleButton(Button):
             )
             return
 
-        # Записываем пользователя
         current_slots[self.slot_number]["user"] = interaction.user
         await update_message(last_embed_message, current_user=interaction.user)
         await interaction.response.send_message(
@@ -83,39 +97,48 @@ class LeaveButton(Button):
         )
 
 # ==============================
-# Генерация кнопок и обновлений
+# View для кнопок
 # ==============================
 class SignupView(View):
-    def __init__(self, user=None):
+    def __init__(self, current_user=None):
         super().__init__(timeout=None)
         for slot_id, info in current_slots.items():
-            # Кнопка "Записаться"
             self.add_item(RoleButton(slot_id, info["name"]))
-            # Кнопка "Отписаться" только для пользователя, который записан
-            if user and info["user"] == user:
-                self.add_item(LeaveButton(slot_id, info["name"]))
+        if current_user:
+            for slot_id, info in current_slots.items():
+                if info["user"] == current_user:
+                    self.add_item(LeaveButton(slot_id, info["name"]))
 
+# ==============================
+# Обновление сообщения
+# ==============================
 async def update_message(message, current_user=None):
     if not message:
         return
-    embed = discord.Embed(title="Запись на Mythic+", color=0x00ff99)
+
+    description = message.embeds[0].description if message.embeds else ""
+    now = datetime.now()
+    title = f"Запись {now.strftime('%H:%M %d.%m')}"
+
+    embed = discord.Embed(title=title, description=description, color=0x00ff99)
+
     desc = ""
     for slot_id, info in current_slots.items():
+        slot_display = add_emoji(info["name"])
         if info["user"]:
-            desc += f"{slot_id}. ✅ {info['name']} — {info['user'].mention}\n"
+            desc += f"{slot_id}. ✅ {slot_display} — {info['user'].mention}\n"
         else:
-            desc += f"{slot_id}. ⬜ {info['name']} — свободно\n"
-    embed.description = message.embeds[0].description  # сохраняем заголовок
+            desc += f"{slot_id}. ⬜ {slot_display} — свободно\n"
+
     embed.add_field(name="Слоты", value=desc, inline=False)
-    await message.edit(embed=embed, view=SignupView(user=current_user))
+    await message.edit(embed=embed, view=SignupView(current_user))
 
 # ==============================
-# Команды бота
+# Команда create
 # ==============================
 def setup_commands(bot):
     @bot.command()
     async def create(ctx, *, text):
-        """Создаёт запись с кнопками для выбора слотов."""
         global current_slots, last_embed_message
         current_slots = {}
 
@@ -124,7 +147,7 @@ def setup_commands(bot):
         slot_lines = []
 
         for line in lines:
-            if line.strip()[0].isdigit():
+            if line.strip() and line.strip()[0].isdigit():
                 slot_lines.append(line.strip())
             else:
                 header_lines.append(line.strip())
@@ -133,18 +156,22 @@ def setup_commands(bot):
             slot_name = line.split(" ", 1)[-1].strip()
             current_slots[idx] = {"name": slot_name, "user": None}
 
-        # Создаём embed
+        now = datetime.now()
+        title = f"Запись {now.strftime('%H:%M %d.%m')}"
+
         embed = discord.Embed(
-            title="Запись на Mythic+",
+            title=title,
             description="\n".join(header_lines),
             color=0x00ff99
         )
 
-        slot_status = "\n".join([f"{i}. ⬜ {info['name']} — свободно" for i, info in current_slots.items()])
+        slot_status = "\n".join([
+            f"{i}. ⬜ {add_emoji(info['name'])} — свободно" for i, info in current_slots.items()
+        ])
         embed.add_field(name="Слоты", value=slot_status, inline=False)
 
-        # Отправляем сообщение с упоминанием @everyone
         last_embed_message = await ctx.send(content="@everyone", embed=embed, view=SignupView())
+
         try:
             await ctx.message.delete()
         except:
