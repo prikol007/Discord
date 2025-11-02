@@ -150,5 +150,3 @@ async def create(ctx, *, text):
         pass
 
 bot.run(TOKEN)
-
-
