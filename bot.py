@@ -61,7 +61,6 @@ class RoleButton(Button):
             f"✅ Вы записаны на слот {self.slot_name}", ephemeral=True
         )
 
-
 class LeaveButton(Button):
     def __init__(self, slot_number, slot_name):
         super().__init__(label="Отписаться", style=discord.ButtonStyle.danger)
@@ -83,7 +82,6 @@ class LeaveButton(Button):
             f"✅ Вы отписались от слота {self.slot_name}", ephemeral=True
         )
 
-
 # ==============================
 # Генерация кнопок и обновлений
 # ==============================
@@ -97,20 +95,19 @@ class SignupView(View):
             if user and info["user"] == user:
                 self.add_item(LeaveButton(slot_id, info["name"]))
 
-
 async def update_message(message, current_user=None):
     if not message:
         return
-    embed = discord.Embed(title="Запись на поход", color=0x00ff99)
+    embed = discord.Embed(title="Запись на Mythic+", color=0x00ff99)
     desc = ""
     for slot_id, info in current_slots.items():
         if info["user"]:
             desc += f"{slot_id}. ✅ {info['name']} — {info['user'].mention}\n"
         else:
             desc += f"{slot_id}. ⬜ {info['name']} — свободно\n"
-    embed.description = desc
+    embed.description = message.embeds[0].description  # сохраняем заголовок
+    embed.add_field(name="Слоты", value=desc, inline=False)
     await message.edit(embed=embed, view=SignupView(user=current_user))
-
 
 # ==============================
 # Команды бота
@@ -122,45 +119,36 @@ def setup_commands(bot):
         global current_slots, last_embed_message
         current_slots = {}
 
-        # Удаляем старое сообщение, если есть
-        if last_embed_message:
-            try:
-                await last_embed_message.delete()
-            except:
-                pass
-
         lines = text.split("\n")
         header_lines = []
         slot_lines = []
 
-        # Разделяем текст на заголовок и слоты
         for line in lines:
-            if line.strip().startswith(tuple(str(i) for i in range(1, 10))):
+            if line.strip()[0].isdigit():
                 slot_lines.append(line.strip())
             else:
                 header_lines.append(line.strip())
 
-        # Заполняем слоты
         for idx, line in enumerate(slot_lines, start=1):
-            slot_name = line.split(".", 1)[-1].strip()
+            slot_name = line.split(" ", 1)[-1].strip()
             current_slots[idx] = {"name": slot_name, "user": None}
 
         # Создаём embed
         embed = discord.Embed(
-            title="Запись на поход",
+            title="Запись на Mythic+",
             description="\n".join(header_lines),
             color=0x00ff99
         )
 
-        # Добавляем состояние слотов
         slot_status = "\n".join([f"{i}. ⬜ {info['name']} — свободно" for i, info in current_slots.items()])
         embed.add_field(name="Слоты", value=slot_status, inline=False)
 
-        # Отправляем сообщение с кнопками
-        view = SignupView()
-        last_embed_message = await ctx.send(embed=embed, view=view)
-        await ctx.message.delete()
-
+        # Отправляем сообщение с упоминанием @everyone
+        last_embed_message = await ctx.send(content="@everyone", embed=embed, view=SignupView())
+        try:
+            await ctx.message.delete()
+        except:
+            pass
 
 # ==============================
 # Запуск бота
@@ -169,4 +157,3 @@ if __name__ == "__main__":
     bot = commands.Bot(command_prefix="!", intents=intents)
     setup_commands(bot)
     bot.run(TOKEN)
-
