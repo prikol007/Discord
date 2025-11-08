@@ -13,6 +13,10 @@ CPU_LIMIT = 90            # лимит CPU (%)
 LOG_FILE = "bot.log"
 CHECK_INTERVAL = 5        # проверка каждые N секунд
 
+# SSH-конфиг
+SSH_USER = "deploy"
+SSH_HOST = "46.203.233.199"
+
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 def log(message):
@@ -21,6 +25,21 @@ def log(message):
     print(line)
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(line + "\n")
+
+def start_ssh_keepalive():
+    """Запускаем autossh, чтобы поддерживать SSH-сессию живой"""
+    try:
+        # -M 0 отключает мониторинг через порт
+        subprocess.Popen([
+            "autossh",
+            "-M", "0",
+            "-o", "ServerAliveInterval=60",
+            "-o", "ServerAliveCountMax=3",
+            f"{SSH_USER}@{SSH_HOST}"
+        ])
+        log("✅ SSH keep-alive запущен через autossh")
+    except Exception as e:
+        log(f"❌ Ошибка при запуске SSH keep-alive: {e}")
 
 def monitor_process(process):
     """Следим за процессом, пока он работает"""
@@ -31,56 +50,35 @@ def monitor_process(process):
 
     while True:
         time.sleep(CHECK_INTERVAL)
-        if process.poll() is not None:  # бот завершился
-            log("⚠️ Подпроцесс завершён.")
-            return False
-
         try:
-            cpu = ps_proc.cpu_percent(interval=None) / psutil.cpu_count()
-            mem = ps_proc.memory_info().rss / 1024 / 1024
-
+            mem = ps_proc.memory_info().rss / (1024 * 1024)  # в MB
+            cpu = ps_proc.cpu_percent()
             if mem > MEMORY_LIMIT_MB:
-                log(f"🚨 Превышен лимит памяти ({mem:.0f} MB > {MEMORY_LIMIT_MB}) — перезапуск.")
-                ps_proc.terminate()
-                return True
-
+                log(f"⚠️ Процесс использует слишком много памяти: {mem:.2f} MB")
+                return False
             if cpu > CPU_LIMIT:
-                log(f"🚨 Высокая загрузка CPU ({cpu:.0f}% > {CPU_LIMIT}%) — перезапуск.")
-                ps_proc.terminate()
-                return True
-
+                log(f"⚠️ CPU перегружен: {cpu:.2f}%")
+                return False
         except psutil.NoSuchProcess:
+            log("⚠️ Процесс завершён")
             return False
         except Exception as e:
-            log(f"Ошибка мониторинга: {e}")
+            log(f"❌ Ошибка мониторинга: {traceback.format_exc()}")
             return False
 
-def run_bot():
-    """Запускаем бот как подпроцесс и пишем лог в файл"""
-    out_path = Path("bot_output.log")
-    with out_path.open("a", encoding="utf-8") as out:
-        process = subprocess.Popen(
-            ["python", BOT_FILE],
-            stdout=out,
-            stderr=subprocess.STDOUT,
-            text=True
-        )
-    return process
-
+# Пример использования:
 if __name__ == "__main__":
-    log("🟢 Watchdog запущен")
+    # Запускаем SSH keep-alive сразу при старте
+    start_ssh_keepalive()
+
+    # Запуск бота в отдельном процессе
     while True:
         try:
-            process = run_bot()
-            log("🚀 Бот запущен")
-            restart_needed = monitor_process(process)
-            gc.collect()
-            log(f"♻️ Перезапуск через {RESTART_DELAY} сек...\n")
-            time.sleep(RESTART_DELAY)
-
-        except KeyboardInterrupt:
-            log("⛔ Завершение по Ctrl+C")
-            break
-        except Exception:
-            log(f"❌ Ошибка Watchdog: {traceback.format_exc()}")
-            time.sleep(RESTART_DELAY)
+            log("🚀 Запуск бота")
+            process = subprocess.Popen(["python3", BOT_FILE])
+            monitor_process(process)
+        except Exception as e:
+            log(f"❌ Ошибка запуска: {traceback.format_exc()}")
+        log(f"♻️ Перезапуск через {RESTART_DELAY} секунд...")
+        time.sleep(RESTART_DELAY)
+        gc.collect()
