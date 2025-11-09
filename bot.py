@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands, tasks
 from discord.ui import Button, View, Modal, TextInput
-import json, os, time, asyncio
+import json, os, time, asyncio, shutil
 from dotenv import load_dotenv
 import traceback
 from admin import setup as setup_admin, blocked_channels  # импортируем блокировки
@@ -291,6 +291,42 @@ async def cleanup_old_raids():
     if expired:
         save_json(DATA_FILE, raids)
 
+# ================== АВТОМАТИЧЕСКАЯ ОЧИСТКА ЛОГОВ И ФАЙЛОВ ==================
+LOG_FILES = ["bot.log", "bot_output.log"]
+MAX_LOG_SIZE_MB = 5
+MAX_RAIDS_FILE_AGE_HOURS = 12
+
+@tasks.loop(minutes=60)
+async def cleanup_files_loop():
+    now = time.time()
+
+    # Очистка логов
+    for log in LOG_FILES:
+        if os.path.exists(log):
+            size_mb = os.path.getsize(log) / (1024 * 1024)
+            if size_mb > MAX_LOG_SIZE_MB:
+                with open(log, "w", encoding="utf-8") as f:
+                    f.write("")
+                print(f"🧹 Очищен лог {log} ({size_mb:.1f} МБ)")
+
+    # Очистка raids.json если нет активных рейдов
+    if os.path.exists(DATA_FILE):
+        raids_data = load_json(DATA_FILE, {})
+        active_raids = sum(1 for r in raids_data.values() if now - r.get("created_at", now) < RAID_EXPIRE)
+        if active_raids == 0:
+            mtime = os.path.getmtime(DATA_FILE)
+            if now - mtime > MAX_RAIDS_FILE_AGE_HOURS * 3600:
+                save_json(DATA_FILE, {})
+                print(f"🗑️ Очищен файл {DATA_FILE} — старых рейдов нет")
+
+    # Очистка channel.json, если старше недели
+    if os.path.exists(CHANNEL_FILE):
+        mtime = os.path.getmtime(CHANNEL_FILE)
+        if now - mtime > 7 * 24 * 3600:
+            shutil.copy(CHANNEL_FILE, f"{CHANNEL_FILE}.bak")
+            save_json(CHANNEL_FILE, [])
+            print("🧾 channel.json очищен (создан бэкап .bak)")
+
 # ================== Инициализация admin.py ==================
 setup_admin(bot, channels_data)
 
@@ -307,8 +343,9 @@ async def on_ready():
         refresh_panels_loop.start()
     if not cleanup_old_raids.is_running():
         cleanup_old_raids.start()
+    if not cleanup_files_loop.is_running():
+        cleanup_files_loop.start()
     for raid_id in raids:
         bot.add_view(RaidSignupView(raid_id))
 
 bot.run(TOKEN)
-
