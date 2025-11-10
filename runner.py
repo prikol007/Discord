@@ -4,16 +4,16 @@ import psutil
 import subprocess
 import traceback
 import requests
-from pathlib import Path
 import gc
 
 # ---------------------- Настройки ----------------------
-BOT_FILE = "bot.py"          # твой бот
-RESTART_DELAY = 10           # пауза перед перезапуском
-MEMORY_LIMIT_MB = 450        # лимит памяти
-CPU_LIMIT = 90               # лимит CPU %
-CHECK_INTERVAL = 5           # проверка каждые N секунд
-LOG_FILE = "bot.log"         # лог-файл
+BOT_FILE = "bot.py"          # Файл бота
+RESTART_DELAY = 10           # Пауза перед перезапуском
+MEMORY_LIMIT_MB = 450        # Лимит памяти
+CPU_LIMIT = 90               # Лимит CPU %
+CHECK_INTERVAL = 5           # Проверка каждые N секунд
+LOG_FILE = "bot.log"         # Лог-файл
+BOT_OUTPUT_LOG = "bot_output.log"  # Лог бота
 KEEPALIVE_INTERVAL = 300     # 5 минут ping самому себе
 
 # SSH keep-alive (опционально)
@@ -29,6 +29,7 @@ AUTOSSH_CMD = [
 
 # ---------------------- Функции ----------------------
 def log(message):
+    """Записывает сообщение в лог-файл и выводит на экран"""
     timestamp = time.strftime("[%Y-%m-%d %H:%M:%S]")
     line = f"{timestamp} {message}"
     print(line)
@@ -52,7 +53,7 @@ def ping_self():
         pass
 
 def monitor_process(process):
-    """Следим за процессом бота"""
+    """Следим за процессом бота и контролируем память/CPU"""
     try:
         ps_proc = psutil.Process(process.pid)
     except psutil.NoSuchProcess:
@@ -88,12 +89,16 @@ if __name__ == "__main__":
     # Запуск SSH keep-alive
     start_ssh_keepalive()
 
-    # Основной цикл перезапуска бота
     last_ping = 0
     while True:
         try:
             log("🚀 Запуск бота")
-            process = subprocess.Popen(["python3", BOT_FILE])
+            # Запуск бота с записью вывода в отдельный лог
+            process = subprocess.Popen(
+                ["python3", BOT_FILE],
+                stdout=open(BOT_OUTPUT_LOG, "a"),
+                stderr=subprocess.STDOUT
+            )
 
             while True:
                 # Пинг VPS каждые KEEPALIVE_INTERVAL секунд
@@ -106,7 +111,7 @@ if __name__ == "__main__":
                     log("⚠️ Процесс бота завершён")
                     break
 
-                mem = psutil.Process(process.pid).memory_info().rss / (1024*1024)
+                mem = psutil.Process(process.pid).memory_info().rss / (1024 * 1024)
                 cpu = psutil.Process(process.pid).cpu_percent(interval=1)
                 if mem > MEMORY_LIMIT_MB or cpu > CPU_LIMIT:
                     log(f"⚠️ Перезапуск: mem={mem:.2f}MB cpu={cpu:.2f}%")
