@@ -7,14 +7,17 @@ import requests
 import gc
 
 # ---------------------- Настройки ----------------------
-BOT_FILE = "bot.py"          # Файл бота
-RESTART_DELAY = 10           # Пауза перед перезапуском
-MEMORY_LIMIT_MB = 450        # Лимит памяти
-CPU_LIMIT = 90               # Лимит CPU %
-CHECK_INTERVAL = 5           # Проверка каждые N секунд
-LOG_FILE = "bot.log"         # Лог-файл
-BOT_OUTPUT_LOG = "bot_output.log"  # Лог бота
-KEEPALIVE_INTERVAL = 300     # 5 минут ping самому себе
+BOT_FILE = "bot.py"                  # Файл бота
+RESTART_DELAY = 10                   # Пауза перед перезапуском
+MEMORY_LIMIT_MB = 450                # Лимит памяти
+CPU_LIMIT = 90                       # Лимит CPU %
+CHECK_INTERVAL = 5                   # Проверка каждые N секунд
+LOG_FILE = "bot.log"                 # Лог контроллера
+BOT_OUTPUT_LOG = "bot_output.log"    # Лог самого бота
+KEEPALIVE_INTERVAL = 300             # 5 минут ping самому себе
+GIT_REPO = "origin"                  # удалённый репозиторий
+GIT_BRANCH = "main"                  # ветка для автопула
+GIT_CHECK_INTERVAL = 60              # Проверка обновлений каждые N секунд
 
 # SSH keep-alive (опционально)
 SSH_USER = "deploy"
@@ -29,7 +32,6 @@ AUTOSSH_CMD = [
 
 # ---------------------- Функции ----------------------
 def log(message):
-    """Записывает сообщение в лог-файл и выводит на экран"""
     timestamp = time.strftime("[%Y-%m-%d %H:%M:%S]")
     line = f"{timestamp} {message}"
     print(line)
@@ -37,7 +39,6 @@ def log(message):
         f.write(line + "\n")
 
 def start_ssh_keepalive():
-    """Запускаем autossh для поддержания SSH-сессии"""
     try:
         subprocess.Popen(AUTOSSH_CMD)
         log("✅ SSH keep-alive запущен через autossh")
@@ -45,7 +46,6 @@ def start_ssh_keepalive():
         log(f"❌ Ошибка при запуске SSH keep-alive: {e}")
 
 def ping_self():
-    """Лёгкий HTTP-запрос к локальному серверу, чтобы VPS не засыпала"""
     try:
         requests.get("http://localhost", timeout=2)
         log("💓 Ping самому себе отправлен")
@@ -53,7 +53,6 @@ def ping_self():
         pass
 
 def monitor_process(process):
-    """Следим за процессом бота и контролируем память/CPU"""
     try:
         ps_proc = psutil.Process(process.pid)
     except psutil.NoSuchProcess:
@@ -65,14 +64,14 @@ def monitor_process(process):
             log("⚠️ Процесс завершён")
             return False
         try:
-            mem = ps_proc.memory_info().rss / (1024 * 1024)  # MB
-            cpu = ps_proc.cpu_percent(interval=1)            # % CPU
+            mem = ps_proc.memory_info().rss / (1024 * 1024)
+            cpu = ps_proc.cpu_percent(interval=1)
             if mem > MEMORY_LIMIT_MB:
-                log(f"⚠️ Процесс использует слишком много памяти: {mem:.2f} MB")
+                log(f"⚠️ Перезапуск из-за памяти: {mem:.2f} MB")
                 process.kill()
                 return False
             if cpu > CPU_LIMIT:
-                log(f"⚠️ CPU перегружен: {cpu:.2f}%")
+                log(f"⚠️ Перезапуск из-за CPU: {cpu:.2f}%")
                 process.kill()
                 return False
         except psutil.NoSuchProcess:
@@ -82,18 +81,40 @@ def monitor_process(process):
             log(f"❌ Ошибка мониторинга:\n{traceback.format_exc()}")
             return False
 
+def git_pull_update():
+    """Проверяет и подтягивает обновления из Git"""
+    try:
+        # Проверяем наличие новых коммитов
+        subprocess.run(["git", "fetch", GIT_REPO], check=True)
+        local = subprocess.check_output(["git", "rev-parse", GIT_BRANCH]).decode().strip()
+        remote = subprocess.check_output(["git", "rev-parse", f"{GIT_REPO}/{GIT_BRANCH}"]).decode().strip()
+        if local != remote:
+            log("🔄 Найдены обновления на GitHub, выполняем pull...")
+            subprocess.run(["git", "pull", GIT_REPO, GIT_BRANCH], check=True)
+            log("✅ Обновления подтянуты, перезапускаем бота")
+            return True
+    except Exception as e:
+        log(f"❌ Ошибка при git pull: {e}")
+    return False
+
 # ---------------------- Основной цикл ----------------------
 if __name__ == "__main__":
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
-
-    # Запуск SSH keep-alive
     start_ssh_keepalive()
-
     last_ping = 0
+    last_git_check = 0
+
     while True:
         try:
+            # Проверка обновлений из Git
+            if time.time() - last_git_check > GIT_CHECK_INTERVAL:
+                if git_pull_update():
+                    # если есть обновления, перезапускаем сразу
+                    time.sleep(RESTART_DELAY)
+                    continue
+                last_git_check = time.time()
+
             log("🚀 Запуск бота")
-            # Запуск бота с записью вывода в отдельный лог
             process = subprocess.Popen(
                 ["python3", BOT_FILE],
                 stdout=open(BOT_OUTPUT_LOG, "a"),
@@ -101,22 +122,28 @@ if __name__ == "__main__":
             )
 
             while True:
-                # Пинг VPS каждые KEEPALIVE_INTERVAL секунд
                 if time.time() - last_ping > KEEPALIVE_INTERVAL:
                     ping_self()
                     last_ping = time.time()
 
-                # Проверяем процесс
+                # Проверка процесса
                 if process.poll() is not None:
                     log("⚠️ Процесс бота завершён")
                     break
 
-                mem = psutil.Process(process.pid).memory_info().rss / (1024 * 1024)
+                mem = psutil.Process(process.pid).memory_info().rss / (1024*1024)
                 cpu = psutil.Process(process.pid).cpu_percent(interval=1)
                 if mem > MEMORY_LIMIT_MB or cpu > CPU_LIMIT:
-                    log(f"⚠️ Перезапуск: mem={mem:.2f}MB cpu={cpu:.2f}%")
+                    log(f"⚠️ Перезапуск из-за лимитов: mem={mem:.2f}MB cpu={cpu:.2f}%")
                     process.kill()
                     break
+
+                # Проверка Git на обновления
+                if time.time() - last_git_check > GIT_CHECK_INTERVAL:
+                    if git_pull_update():
+                        process.kill()
+                        break
+                    last_git_check = time.time()
 
                 time.sleep(CHECK_INTERVAL)
 
