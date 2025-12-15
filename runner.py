@@ -16,10 +16,6 @@ CHECK_INTERVAL = 5           # проверка каждые N секунд
 LOG_FILE = "bot.log"         # лог-файл
 KEEPALIVE_INTERVAL = 300     # 5 минут ping самому себе
 
-# Git
-GIT_REPO_DIR = "/app"
-GIT_BRANCH = "main"
-
 # Настройка логов
 logging.basicConfig(
     level=logging.INFO,
@@ -32,17 +28,6 @@ logging.basicConfig(
 )
 
 # ---------------------- Функции ----------------------
-def git_pull():
-    """Обновляем код из Git"""
-    try:
-        subprocess.run(["git", "fetch", "--all"], cwd=GIT_REPO_DIR, check=True)
-        subprocess.run(["git", "reset", "--hard", f"origin/{GIT_BRANCH}"], cwd=GIT_REPO_DIR, check=True)
-        logging.info("✅ Git обновлён успешно")
-        return True
-    except subprocess.CalledProcessError as e:
-        logging.error(f"❌ Ошибка при git pull: {e}")
-        return False
-
 def ping_self():
     """Лёгкий HTTP-запрос к локальному серверу, чтобы VPS не засыпала"""
     try:
@@ -88,9 +73,6 @@ if __name__ == "__main__":
 
     while True:
         try:
-            logging.info("♻️ Проверка обновлений Git...")
-            git_pull()  # обновляем код перед запуском
-
             logging.info("🚀 Запуск бота")
             process = subprocess.Popen(["python3", BOT_FILE])
 
