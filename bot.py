@@ -10,7 +10,7 @@ from admin import setup as setup_admin, blocked_channels  # импортируе
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 if not TOKEN:
-    print("❌ DISCORD_TOKEN не найден")
+    print("❌ TOKEN не найден")
     exit(1)
 
 ADMIN_ID = 1030933788005502996
