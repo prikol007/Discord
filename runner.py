@@ -17,7 +17,7 @@ LOG_FILE = "bot.log"         # лог-файл
 KEEPALIVE_INTERVAL = 300     # 5 минут ping самому себе
 
 # Git
-GIT_REPO_DIR = "/home/deploy/discordbot"
+GIT_REPO_DIR = "/app"
 GIT_BRANCH = "main"
 
 # Настройка логов
